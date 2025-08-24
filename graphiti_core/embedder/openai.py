@@ -63,7 +63,14 @@ class OpenAIEmbedder(EmbedderClient):
         if client is not None:
             self.client = client
         else:
-            self.client = AsyncOpenAI(api_key=config.api_key, base_url=config.base_url)
+            # Only pass non-None values to let OpenAI handle environment variables automatically
+            client_kwargs = {}
+            if config.api_key is not None:
+                client_kwargs['api_key'] = config.api_key
+            if config.base_url is not None:
+                client_kwargs['base_url'] = config.base_url
+
+            self.client = AsyncOpenAI(**client_kwargs)
 
     async def create(
         self, input_data: str | list[str] | Iterable[int] | Iterable[Iterable[int]]
