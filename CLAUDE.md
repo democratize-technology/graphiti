@@ -96,8 +96,21 @@ docker-compose up
 ### Environment Variables
 
 - `OPENAI_API_KEY` - Required for LLM inference and embeddings
+- `EMBEDDING_MODEL` - Optional embedding model name (default: `text-embedding-3-small`)
+- `OPENAI_BASE_URL` - Optional custom OpenAI API base URL (for LiteLLM proxy integration)
 - `USE_PARALLEL_RUNTIME` - Optional boolean for Neo4j parallel runtime (enterprise only)
 - Provider-specific keys: `ANTHROPIC_API_KEY`, `GOOGLE_API_KEY`, `GROQ_API_KEY`, `VOYAGE_API_KEY`
+
+#### LiteLLM Integration for Custom Embeddings
+
+To use Bedrock titan embeddings or other providers through LiteLLM:
+
+```bash
+# Set up LiteLLM proxy to serve your embeddings
+EMBEDDING_MODEL=amazon.titan-embed-text-v1  # Your LiteLLM model name
+OPENAI_BASE_URL=http://localhost:4000       # Your LiteLLM proxy URL
+OPENAI_API_KEY=dummy-key                    # Not needed for LiteLLM proxy
+```
 
 ### Database Setup
 

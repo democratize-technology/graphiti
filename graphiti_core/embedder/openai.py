@@ -14,6 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 """
 
+import os
 from collections.abc import Iterable
 
 from openai import AsyncAzureOpenAI, AsyncOpenAI
@@ -43,7 +44,20 @@ class OpenAIEmbedder(EmbedderClient):
         client: AsyncOpenAI | AsyncAzureOpenAI | None = None,
     ):
         if config is None:
-            config = OpenAIEmbedderConfig()
+            # Read configuration from environment variables when no config is provided
+            embedding_model = (
+                os.getenv('EMBEDDING_MODEL')
+                or os.getenv('EMBEDDER_MODEL_NAME')
+                or DEFAULT_EMBEDDING_MODEL
+            )
+            api_key = os.getenv('OPENAI_API_KEY')
+            base_url = os.getenv('OPENAI_BASE_URL')
+
+            config = OpenAIEmbedderConfig(
+                embedding_model=embedding_model,
+                api_key=api_key,
+                base_url=base_url,
+            )
         self.config = config
 
         if client is not None:
