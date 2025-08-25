@@ -82,19 +82,33 @@ if QDRANT_AVAILABLE:
 
         async def initialize_collections(self, embedding_dim: int = 1024) -> None:
             """Create collections if they don't exist"""
+            if not (1 <= embedding_dim <= 4096):
+                raise ValueError('Embedding dimension must be between 1 and 4096')
+                
             for _collection_enum, collection_name in self._collection_names.items():
                 try:
                     self.client.get_collection(collection_name)
                     logger.info(f'Collection {collection_name} already exists')
-                except Exception:
-                    logger.info(f'Creating collection {collection_name}')
-                    self.client.create_collection(
-                        collection_name=collection_name,
-                        vectors_config=VectorParams(
-                            size=embedding_dim,
-                            distance=Distance.COSINE,
-                        ),
-                    )
+                except models.UnexpectedResponse as e:
+                    if 'not found' in str(e).lower():
+                        logger.info(f'Creating collection {collection_name}')
+                        try:
+                            self.client.create_collection(
+                                collection_name=collection_name,
+                                vectors_config=VectorParams(
+                                    size=embedding_dim,
+                                    distance=Distance.COSINE,
+                                ),
+                            )
+                        except Exception as create_error:
+                            logger.error(f'Failed to create collection {collection_name}: {create_error}')
+                            raise ConnectionError(f'Unable to create Qdrant collection: {create_error}') from create_error
+                    else:
+                        logger.error(f'Unexpected error accessing collection {collection_name}: {e}')
+                        raise ConnectionError(f'Unable to access Qdrant collection: {e}') from e
+                except Exception as e:
+                    logger.error(f'Failed to check collection {collection_name}: {e}')
+                    raise ConnectionError(f'Unable to connect to Qdrant: {e}') from e
 
         async def upsert_vectors(
             self,
@@ -102,10 +116,28 @@ if QDRANT_AVAILABLE:
             vectors: list[tuple[str, list[float], dict[str, Any]]],
         ) -> None:
             """Store or update vectors in the specified collection"""
+            if not vectors:
+                return
+                
+            # Security: Limit batch size to prevent resource exhaustion
+            MAX_BATCH_SIZE = 1000
+            if len(vectors) > MAX_BATCH_SIZE:
+                raise ValueError(f'Batch size {len(vectors)} exceeds maximum {MAX_BATCH_SIZE}')
+            
             collection_name = self._collection_names[collection]
-
+            
             points = []
-            for uuid, embedding, metadata in vectors:
+            for i, (uuid, embedding, metadata) in enumerate(vectors):
+                # Input validation
+                if not uuid or not isinstance(uuid, str):
+                    raise ValueError(f'Invalid UUID at index {i}: must be non-empty string')
+                if not embedding or not isinstance(embedding, list):
+                    raise ValueError(f'Invalid embedding at index {i}: must be non-empty list')
+                if len(embedding) > 4096:
+                    raise ValueError(f'Embedding at index {i} too large: {len(embedding)} dimensions')
+                if not isinstance(metadata, dict):
+                    raise ValueError(f'Invalid metadata at index {i}: must be dictionary')
+                    
                 point = PointStruct(
                     id=uuid,
                     vector=embedding,
@@ -113,8 +145,12 @@ if QDRANT_AVAILABLE:
                 )
                 points.append(point)
 
-            self.client.upsert(collection_name=collection_name, points=points, wait=True)
-            logger.debug(f'Stored {len(points)} vectors in {collection_name}')
+            try:
+                self.client.upsert(collection_name=collection_name, points=points, wait=True)
+                logger.debug(f'Stored {len(points)} vectors in {collection_name}')
+            except Exception as e:
+                logger.error(f'Failed to upsert vectors to {collection_name}: {e}')
+                raise ConnectionError(f'Unable to store vectors in Qdrant: {e}') from e
 
         async def search_vectors(
             self,
@@ -126,6 +162,16 @@ if QDRANT_AVAILABLE:
             group_ids: list[str] | None = None,
         ) -> list[VectorSearchResult]:
             """Search for similar vectors in the specified collection"""
+            # Input validation
+            if not query_vector or not isinstance(query_vector, list):
+                raise ValueError('Query vector must be a non-empty list')
+            if len(query_vector) > 4096:
+                raise ValueError(f'Query vector too large: {len(query_vector)} dimensions')
+            if not (1 <= limit <= 1000):
+                raise ValueError('Limit must be between 1 and 1000')
+            if not (0.0 <= min_score <= 1.0):
+                raise ValueError('Min score must be between 0.0 and 1.0')
+                
             collection_name = self._collection_names[collection]
 
             # Build filter conditions
@@ -159,13 +205,17 @@ if QDRANT_AVAILABLE:
             search_filter = models.Filter(must=must_conditions) if must_conditions else None
 
             # Perform search using query_points
-            results = self.client.query_points(
-                collection_name=collection_name,
-                query=query_vector,
-                query_filter=search_filter,
-                limit=limit,
-                score_threshold=min_score,
-            )
+            try:
+                results = self.client.query_points(
+                    collection_name=collection_name,
+                    query=query_vector,
+                    query_filter=search_filter,
+                    limit=limit,
+                    score_threshold=min_score,
+                )
+            except Exception as e:
+                logger.error(f'Failed to search vectors in {collection_name}: {e}')
+                raise ConnectionError(f'Unable to search vectors in Qdrant: {e}') from e
 
             # Convert to VectorSearchResult objects
             search_results = []
@@ -324,8 +374,21 @@ if QDRANT_AVAILABLE:
                 )
                 logger.debug(f'Deleted {len(uuids)} vectors from {collection_name} (legacy)')
 
+    async def health_check(self) -> bool:
+        """Check if Qdrant connection is healthy"""
+        try:
+            # Simple health check by trying to list collections
+            self.client.get_collections()
+            return True
+        except Exception as e:
+            logger.warning(f'Qdrant health check failed: {e}')
+            return False
+
     async def close(self) -> None:
         """Close the Qdrant client connection."""
-        if hasattr(self.client, 'close'):
-            self.client.close()
-        logger.debug('Closed Qdrant vector store connection')
+        try:
+            if hasattr(self.client, 'close'):
+                self.client.close()
+            logger.debug('Closed Qdrant vector store connection')
+        except Exception as e:
+            logger.warning(f'Error during Qdrant connection close: {e}')

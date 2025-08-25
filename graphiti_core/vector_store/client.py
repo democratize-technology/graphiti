@@ -126,6 +126,16 @@ class VectorStore(ABC):
         """
         pass
 
+    async def health_check(self) -> bool:
+        """
+        Check if the vector store connection is healthy.
+        
+        Returns:
+            True if connection is healthy, False otherwise
+        """
+        # Default implementation assumes always healthy
+        return True
+
     async def close(self) -> None:
         """
         Close the vector store connection.
