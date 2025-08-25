@@ -58,6 +58,7 @@ from graphiti_core.search.search_filters import (
     edge_search_filter_query_constructor,
     node_search_filter_query_constructor,
 )
+from graphiti_core.vector_store import VectorStore
 
 logger = logging.getLogger(__name__)
 
@@ -306,7 +307,32 @@ async def edge_similarity_search(
     group_ids: list[str] | None = None,
     limit: int = RELEVANT_SCHEMA_LIMIT,
     min_score: float = DEFAULT_MIN_SCORE,
+    vector_store: VectorStore | None = None,
 ) -> list[EntityEdge]:
+    # Use vector store if available for high-performance similarity search
+    if vector_store is not None:
+        filters = {}
+        if group_ids is not None:
+            filters['group_id'] = group_ids
+        if source_node_uuid is not None:
+            filters['source_node_uuid'] = [source_node_uuid]
+        if target_node_uuid is not None:
+            filters['target_node_uuid'] = [target_node_uuid]
+
+        # Add edge type filter
+        filters['type'] = ['edge']
+
+        results = await vector_store.similarity_search(
+            search_vector, limit=limit, threshold=min_score, filters=filters
+        )
+
+        # Retrieve full edge objects from graph database using the IDs
+        if results:
+            edge_uuids = [result['id'] for result in results]
+            return await EntityEdge.get_by_uuids(driver, edge_uuids)
+        else:
+            return []
+
     if driver.search_interface:
         return await driver.search_interface.edge_similarity_search(
             driver,
@@ -319,6 +345,8 @@ async def edge_similarity_search(
             min_score,
         )
 
+    # Fallback to graph database vector similarity search
+    # vector similarity search over embedded facts
     match_query = """
         MATCH (n:Entity)-[e:RELATES_TO]->(m:Entity)
     """
@@ -676,12 +704,35 @@ async def node_similarity_search(
     group_ids: list[str] | None = None,
     limit=RELEVANT_SCHEMA_LIMIT,
     min_score: float = DEFAULT_MIN_SCORE,
+    vector_store: VectorStore | None = None,
 ) -> list[EntityNode]:
+    # Use vector store if available for high-performance similarity search
+    if vector_store is not None:
+        filters = {}
+        if group_ids is not None:
+            filters['group_id'] = group_ids
+
+        # Add node type filter
+        filters['type'] = ['node']
+
+        results = await vector_store.similarity_search(
+            search_vector, limit=limit, threshold=min_score, filters=filters
+        )
+
+        # Retrieve full node objects from graph database using the IDs
+        if results:
+            node_uuids = [result['id'] for result in results]
+            return await EntityNode.get_by_uuids(driver, node_uuids)
+        else:
+            return []
+
     if driver.search_interface:
         return await driver.search_interface.node_similarity_search(
             driver, search_vector, search_filter, group_ids, limit, min_score
         )
 
+    # Fallback to graph database vector similarity search
+    # vector similarity search over entity names
     filter_queries, filter_params = node_search_filter_query_constructor(
         search_filter, driver.provider
     )

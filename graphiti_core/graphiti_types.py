@@ -21,6 +21,7 @@ from graphiti_core.driver.driver import GraphDriver
 from graphiti_core.embedder import EmbedderClient
 from graphiti_core.llm_client import LLMClient
 from graphiti_core.tracer import Tracer
+from graphiti_core.vector_store import VectorStore
 
 
 class GraphitiClients(BaseModel):
@@ -29,5 +30,7 @@ class GraphitiClients(BaseModel):
     embedder: EmbedderClient
     cross_encoder: CrossEncoderClient
     tracer: Tracer
+    vector_store: VectorStore | None = None
+    ensure_ascii: bool = False
 
     model_config = ConfigDict(arbitrary_types_allowed=True)

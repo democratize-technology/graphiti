@@ -28,6 +28,7 @@ from graphiti_core.embedder.client import EMBEDDING_DIM
 from graphiti_core.errors import SearchRerankerError
 from graphiti_core.graphiti_types import GraphitiClients
 from graphiti_core.helpers import semaphore_gather, validate_group_ids
+from graphiti_core.vector_store.client import VectorStore
 from graphiti_core.nodes import CommunityNode, EntityNode, EpisodicNode
 from graphiti_core.search.search_config import (
     DEFAULT_SEARCH_LIMIT,
@@ -184,6 +185,7 @@ async def search(
                 config.limit,
                 config.reranker_min_score,
                 search_tracer,
+                vector_store=clients.vector_store,
             ),
             node_search(
                 driver,
@@ -198,6 +200,7 @@ async def search(
                 config.limit,
                 config.reranker_min_score,
                 search_tracer,
+                vector_store=clients.vector_store,
             ),
             episode_search(
                 driver,
@@ -263,6 +266,7 @@ async def edge_search(
     limit=DEFAULT_SEARCH_LIMIT,
     reranker_min_score: float = 0,
     search_tracer: Tracer | None = None,
+    vector_store: VectorStore | None = None,
 ) -> tuple[list[EntityEdge], list[float]]:
     if config is None:
         return [], []
@@ -296,6 +300,7 @@ async def edge_search(
                     group_ids,
                     2 * limit,
                     config.sim_min_score,
+                    vector_store,
                 )
             )
         if EdgeSearchMethod.bfs in config.search_methods:
@@ -473,6 +478,7 @@ async def node_search(
     limit=DEFAULT_SEARCH_LIMIT,
     reranker_min_score: float = 0,
     search_tracer: Tracer | None = None,
+    vector_store: VectorStore | None = None,
 ) -> tuple[list[EntityNode], list[float]]:
     if config is None:
         return [], []
@@ -504,6 +510,7 @@ async def node_search(
                     group_ids,
                     2 * limit,
                     config.sim_min_score,
+                    vector_store,
                 )
             )
         if NodeSearchMethod.bfs in config.search_methods:
