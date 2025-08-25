@@ -116,8 +116,7 @@ async def search(
         (communities, community_reranker_scores),
     ) = await semaphore_gather(
         edge_search(
-            driver,
-            cross_encoder,
+            clients,
             query,
             search_vector,
             group_ids,
@@ -129,8 +128,7 @@ async def search(
             config.reranker_min_score,
         ),
         node_search(
-            driver,
-            cross_encoder,
+            clients,
             query,
             search_vector,
             group_ids,
@@ -183,8 +181,7 @@ async def search(
 
 
 async def edge_search(
-    driver: GraphDriver,
-    cross_encoder: CrossEncoderClient,
+    clients: GraphitiClients,
     query: str,
     query_vector: list[float],
     group_ids: list[str] | None,
@@ -197,6 +194,9 @@ async def edge_search(
 ) -> tuple[list[EntityEdge], list[float]]:
     if config is None:
         return [], []
+
+    driver = clients.driver
+    cross_encoder = clients.cross_encoder
 
     # Build search tasks based on configured search methods
     search_tasks = []
@@ -215,6 +215,7 @@ async def edge_search(
                 group_ids,
                 2 * limit,
                 config.sim_min_score,
+                clients.vector_store,
             )
         )
     if EdgeSearchMethod.bfs in config.search_methods:
@@ -306,8 +307,7 @@ async def edge_search(
 
 
 async def node_search(
-    driver: GraphDriver,
-    cross_encoder: CrossEncoderClient,
+    clients: GraphitiClients,
     query: str,
     query_vector: list[float],
     group_ids: list[str] | None,
@@ -320,6 +320,9 @@ async def node_search(
 ) -> tuple[list[EntityNode], list[float]]:
     if config is None:
         return [], []
+
+    driver = clients.driver
+    cross_encoder = clients.cross_encoder
 
     # Build search tasks based on configured search methods
     search_tasks = []
@@ -336,6 +339,7 @@ async def node_search(
                 group_ids,
                 2 * limit,
                 config.sim_min_score,
+                clients.vector_store,
             )
         )
     if NodeSearchMethod.bfs in config.search_methods:

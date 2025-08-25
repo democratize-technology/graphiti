@@ -97,6 +97,7 @@ async def add_nodes_and_edges_bulk(
     entity_nodes: list[EntityNode],
     entity_edges: list[EntityEdge],
     embedder: EmbedderClient,
+    vector_store=None,
 ):
     session = driver.session()
     try:
@@ -108,6 +109,7 @@ async def add_nodes_and_edges_bulk(
             entity_edges,
             embedder,
             driver=driver,
+            vector_store=vector_store,
         )
     finally:
         await session.close()
@@ -121,6 +123,7 @@ async def add_nodes_and_edges_bulk_tx(
     entity_edges: list[EntityEdge],
     embedder: EmbedderClient,
     driver: GraphDriver,
+    vector_store=None,
 ):
     episodes = [dict(episode) for episode in episodic_nodes]
     for episode in episodes:
@@ -225,6 +228,48 @@ async def add_nodes_and_edges_bulk_tx(
             await driver.save_to_aoss(EPISODE_INDEX_NAME, episodes)
             await driver.save_to_aoss(ENTITY_INDEX_NAME, nodes)
             await driver.save_to_aoss(ENTITY_EDGE_INDEX_NAME, edges)
+
+    # Store embeddings in vector store if available
+    if vector_store is not None:
+        # Prepare node embeddings for vector store
+        if entity_nodes:
+            node_embeddings = [
+                {
+                    'id': node.uuid,
+                    'embedding': node.name_embedding,
+                    'metadata': {
+                        'type': 'node',
+                        'name': node.name,
+                        'group_id': node.group_id,
+                        'labels': node.labels,
+                    },
+                }
+                for node in entity_nodes
+                if node.name_embedding is not None
+            ]
+            if node_embeddings:
+                await vector_store.store_embeddings(node_embeddings)
+
+        # Prepare edge embeddings for vector store
+        if entity_edges:
+            edge_embeddings = [
+                {
+                    'id': edge.uuid,
+                    'embedding': edge.fact_embedding,
+                    'metadata': {
+                        'type': 'edge',
+                        'name': edge.name,
+                        'fact': edge.fact,
+                        'group_id': edge.group_id,
+                        'source_node_uuid': edge.source_node_uuid,
+                        'target_node_uuid': edge.target_node_uuid,
+                    },
+                }
+                for edge in entity_edges
+                if edge.fact_embedding is not None
+            ]
+            if edge_embeddings:
+                await vector_store.store_embeddings(edge_embeddings)
 
 
 async def extract_nodes_and_edges_bulk(

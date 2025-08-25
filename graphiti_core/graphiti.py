@@ -95,6 +95,7 @@ from graphiti_core.utils.maintenance.node_operations import (
     resolve_extracted_nodes,
 )
 from graphiti_core.utils.ontology_utils.entity_types_utils import validate_entity_types
+from graphiti_core.vector_store import VectorStore
 
 logger = logging.getLogger(__name__)
 
@@ -133,6 +134,7 @@ class Graphiti:
         llm_client: LLMClient | None = None,
         embedder: EmbedderClient | None = None,
         cross_encoder: CrossEncoderClient | None = None,
+        vector_store: VectorStore | None = None,
         store_raw_episode_content: bool = True,
         graph_driver: GraphDriver | None = None,
         max_coroutines: int | None = None,
@@ -161,6 +163,10 @@ class Graphiti:
         cross_encoder : CrossEncoderClient | None, optional
             An instance of CrossEncoderClient for reranking tasks.
             If not provided, a default OpenAIRerankerClient will be initialized.
+        vector_store : VectorStore | None, optional
+            An instance of VectorStore for high-performance vector similarity search.
+            If provided, vector searches will use the vector store instead of the graph database.
+            If not provided, searches will use the graph database's vector capabilities.
         store_raw_episode_content : bool, optional
             Whether to store the raw content of episodes. Defaults to True.
         graph_driver : GraphDriver | None, optional
@@ -215,12 +221,14 @@ class Graphiti:
             self.cross_encoder = cross_encoder
         else:
             self.cross_encoder = OpenAIRerankerClient()
+        self.vector_store = vector_store
 
         self.clients = GraphitiClients(
             driver=self.driver,
             llm_client=self.llm_client,
             embedder=self.embedder,
             cross_encoder=self.cross_encoder,
+            vector_store=self.vector_store,
             ensure_ascii=self.ensure_ascii,
         )
 
@@ -235,12 +243,14 @@ class Graphiti:
             embedder_provider = self._get_provider_type(self.embedder)
             reranker_provider = self._get_provider_type(self.cross_encoder)
             database_provider = self._get_provider_type(self.driver)
+            vector_store_provider = self._get_provider_type(self.vector_store)
 
             properties = {
                 'llm_provider': llm_provider,
                 'embedder_provider': embedder_provider,
                 'reranker_provider': reranker_provider,
                 'database_provider': database_provider,
+                'vector_store_provider': vector_store_provider,
             }
 
             capture_event('graphiti_initialized', properties)
@@ -276,16 +286,25 @@ class Graphiti:
         # Embedder providers
         elif 'voyage' in class_name:
             return 'voyage'
+        # Vector store providers
+        elif 'qdrant' in class_name:
+            return 'qdrant'
+        elif 'pinecone' in class_name:
+            return 'pinecone'
+        elif 'chroma' in class_name:
+            return 'chroma'
+        elif 'weaviate' in class_name:
+            return 'weaviate'
         else:
             return 'unknown'
 
     async def close(self):
         """
-        Close the connection to the Neo4j database.
+        Close the connection to the Neo4j database and vector store (if present).
 
-        This method safely closes the driver connection to the Neo4j database.
-        It should be called when the Graphiti instance is no longer needed or
-        when the application is shutting down.
+        This method safely closes the driver connection to the Neo4j database
+        and the vector store connection (if configured). It should be called when
+        the Graphiti instance is no longer needed or when the application is shutting down.
 
         Parameters
         ----------
@@ -307,9 +326,11 @@ class Graphiti:
             try:
                 # Use graphiti...
             finally:
-                graphiti.close()
+                await graphiti.close()
         """
         await self.driver.close()
+        if self.vector_store is not None:
+            await self.vector_store.close()
 
     async def build_indices_and_constraints(self, delete_existing: bool = False):
         """
@@ -549,7 +570,13 @@ class Graphiti:
                 episode.content = ''
 
             await add_nodes_and_edges_bulk(
-                self.driver, [episode], episodic_edges, hydrated_nodes, entity_edges, self.embedder
+                self.driver,
+                [episode],
+                episodic_edges,
+                hydrated_nodes,
+                entity_edges,
+                self.embedder,
+                self.vector_store,
             )
 
             communities = []
@@ -669,6 +696,7 @@ class Graphiti:
                 entity_nodes=[],
                 entity_edges=[],
                 embedder=self.embedder,
+                vector_store=self.vector_store,
             )
 
             # Get previous episode context for each episode
@@ -852,6 +880,7 @@ class Graphiti:
                 final_hydrated_nodes,
                 resolved_edges + invalidated_edges,
                 self.embedder,
+                self.vector_store,
             )
 
             end = time()
@@ -1078,7 +1107,10 @@ class Graphiti:
         await create_entity_edge_embeddings(self.embedder, edges)
         await create_entity_node_embeddings(self.embedder, nodes)
 
-        await add_nodes_and_edges_bulk(self.driver, [], [], nodes, edges, self.embedder)
+        await add_nodes_and_edges_bulk(
+            self.driver, [], [], nodes, edges, self.embedder, self.vector_store
+        )
+
         return AddTripletResults(edges=edges, nodes=nodes)
 
     async def remove_episode(self, episode_uuid: str):

@@ -10,7 +10,7 @@ import os
 import sys
 from collections.abc import Callable
 from datetime import datetime, timezone
-from typing import Any, TypedDict, cast
+from typing import Any, TypedDict, Union, cast
 
 from azure.identity import DefaultAzureCredential, get_bearer_token_provider
 from dotenv import load_dotenv
@@ -34,6 +34,17 @@ from graphiti_core.search.search_config_recipes import (
 )
 from graphiti_core.search.search_filters import SearchFilters
 from graphiti_core.utils.maintenance.graph_data_operations import clear_data
+from graphiti_core.vector_store import QdrantConfig
+
+# Import QdrantVectorStore with error handling
+try:
+    from graphiti_core.vector_store import QdrantVectorStore
+
+    QDRANT_VECTOR_STORE_AVAILABLE = True
+except ImportError:
+    QDRANT_VECTOR_STORE_AVAILABLE = False
+    # Create a placeholder class for type checking
+    QdrantVectorStore = None
 
 load_dotenv()
 
@@ -466,6 +477,56 @@ class Neo4jConfig(BaseModel):
         )
 
 
+class GraphitiQdrantConfig(BaseModel):
+    """Configuration for Qdrant vector store integration.
+
+    Qdrant integration is optional and only enabled when QDRANT_URL is set.
+    When enabled, provides high-performance vector similarity search capabilities.
+    """
+
+    enabled: bool = Field(default_factory=lambda: bool(os.environ.get('QDRANT_URL')))
+    config: QdrantConfig | None = Field(default=None)
+
+    @classmethod
+    def from_env(cls) -> 'GraphitiQdrantConfig':
+        """Create Qdrant configuration from environment variables."""
+        enabled = bool(os.environ.get('QDRANT_URL'))
+        qdrant_config = None
+
+        if enabled:
+            try:
+                qdrant_config = QdrantConfig()
+                logger.info('Qdrant configuration loaded from environment')
+            except Exception as e:
+                logger.warning(f'Failed to load Qdrant configuration: {e}')
+                enabled = False
+
+        return cls(enabled=enabled, config=qdrant_config)
+
+    def create_vector_store(self) -> Union['QdrantVectorStore', None]:
+        """Create a QdrantVectorStore instance if configuration is valid.
+
+        Returns:
+            QdrantVectorStore instance or None if not configured or unavailable
+        """
+        if not self.enabled or not self.config:
+            return None
+
+        if not QDRANT_VECTOR_STORE_AVAILABLE:
+            logger.warning(
+                'QdrantVectorStore not available. Install with: pip install graphiti-core[qdrant]'
+            )
+            return None
+
+        try:
+            vector_store = QdrantVectorStore(self.config)
+            logger.info('Qdrant vector store initialized successfully')
+            return vector_store
+        except Exception as e:
+            logger.error(f'Failed to create Qdrant vector store: {e}')
+            return None
+
+
 class GraphitiConfig(BaseModel):
     """Configuration for Graphiti client.
 
@@ -475,6 +536,7 @@ class GraphitiConfig(BaseModel):
     llm: GraphitiLLMConfig = Field(default_factory=GraphitiLLMConfig)
     embedder: GraphitiEmbedderConfig = Field(default_factory=GraphitiEmbedderConfig)
     neo4j: Neo4jConfig = Field(default_factory=Neo4jConfig)
+    qdrant: GraphitiQdrantConfig = Field(default_factory=GraphitiQdrantConfig)
     group_id: str | None = None
     use_custom_entities: bool = False
     destroy_graph: bool = False
@@ -486,6 +548,7 @@ class GraphitiConfig(BaseModel):
             llm=GraphitiLLMConfig.from_env(),
             embedder=GraphitiEmbedderConfig.from_env(),
             neo4j=Neo4jConfig.from_env(),
+            qdrant=GraphitiQdrantConfig.from_env(),
         )
 
     @classmethod
@@ -589,6 +652,9 @@ async def initialize_graphiti():
 
         embedder_client = config.embedder.create_client()
 
+        # Create Qdrant vector store if configured
+        vector_store = config.qdrant.create_vector_store()
+
         # Initialize Graphiti client
         graphiti_client = Graphiti(
             uri=config.neo4j.uri,
@@ -596,6 +662,7 @@ async def initialize_graphiti():
             password=config.neo4j.password,
             llm_client=llm_client,
             embedder=embedder_client,
+            vector_store=vector_store,
             max_coroutines=SEMAPHORE_LIMIT,
         )
 
@@ -620,6 +687,14 @@ async def initialize_graphiti():
             f'Custom entity extraction: {"enabled" if config.use_custom_entities else "disabled"}'
         )
         logger.info(f'Using concurrency limit: {SEMAPHORE_LIMIT}')
+
+        # Log Qdrant configuration status
+        if config.qdrant.enabled and vector_store:
+            logger.info('Qdrant vector store: enabled and initialized')
+        elif config.qdrant.enabled:
+            logger.warning('Qdrant vector store: enabled but failed to initialize')
+        else:
+            logger.info('Qdrant vector store: disabled (QDRANT_URL not set)')
 
     except Exception as e:
         logger.error(f'Failed to initialize Graphiti: {str(e)}')
@@ -1127,6 +1202,72 @@ async def clear_graph() -> SuccessResponse | ErrorResponse:
         error_msg = str(e)
         logger.error(f'Error clearing graph: {error_msg}')
         return ErrorResponse(error=f'Error clearing graph: {error_msg}')
+
+
+@mcp.tool()
+async def test_qdrant_connection() -> StatusResponse:
+    """Test Qdrant vector store connectivity and configuration.
+
+    Returns:
+        StatusResponse with status and message about Qdrant connectivity
+    """
+    global graphiti_client, config
+
+    if not config.qdrant.enabled:
+        return StatusResponse(
+            status='disabled', message='Qdrant vector store is disabled (QDRANT_URL not set)'
+        )
+
+    if (
+        not graphiti_client
+        or not hasattr(graphiti_client, 'vector_store')
+        or not graphiti_client.vector_store
+    ):
+        return StatusResponse(
+            status='error', message='Qdrant vector store not initialized or not available'
+        )
+
+    try:
+        # Test basic connectivity by checking if we can access the client
+        vector_store = graphiti_client.vector_store
+        if not QDRANT_VECTOR_STORE_AVAILABLE:
+            return StatusResponse(
+                status='error',
+                message='QdrantVectorStore class not available. Install with: pip install graphiti-core[qdrant]',
+            )
+        if not isinstance(vector_store, QdrantVectorStore):
+            return StatusResponse(status='error', message='Vector store is not a Qdrant instance')
+
+        # Test actual connectivity by getting collection info
+        from graphiti_core.vector_store.client import VectorCollection
+
+        # Try to initialize collections to test connectivity
+        await vector_store.initialize_collections()
+
+        # Get info about one of the collections to verify it works
+        try:
+            entities_info = await vector_store.get_collection_info(VectorCollection.ENTITIES)
+
+            return StatusResponse(
+                status='ok',
+                message=f'Qdrant vector store is connected and operational. '
+                f'Entities collection has {entities_info.get("points_count", 0)} points.',
+            )
+        except Exception as collection_error:
+            return StatusResponse(
+                status='warning',
+                message=f'Qdrant connected but collection access failed: {str(collection_error)}',
+            )
+
+    except ImportError:
+        return StatusResponse(
+            status='error',
+            message='Qdrant client not available. Install with: pip install graphiti-core[qdrant]',
+        )
+    except Exception as e:
+        error_msg = str(e)
+        logger.error(f'Error testing Qdrant connection: {error_msg}')
+        return StatusResponse(status='error', message=f'Qdrant connection test failed: {error_msg}')
 
 
 @mcp.resource('http://graphiti/status')
