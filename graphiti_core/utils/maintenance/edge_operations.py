@@ -15,6 +15,7 @@ limitations under the License.
 """
 
 import logging
+import os
 from datetime import datetime
 from time import time
 
@@ -137,7 +138,7 @@ async def extract_edges(
 
     start = time()
 
-    extract_edges_max_tokens = 16384
+    extract_edges_max_tokens = int(os.environ.get('EXTRACT_EDGES_MAX_TOKENS', 16384))
     llm_client = clients.llm_client
 
     # Build mapping from edge type name to list of valid signatures
