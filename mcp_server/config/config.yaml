@@ -44,8 +44,8 @@ llm:
 
 embedder:
   provider: "openai"  # Options: openai, azure_openai, gemini, voyage
-  model: "text-embedding-3-small"
-  dimensions: 1536
+  model: "${EMBEDDER__MODEL:titan-embed-text}"
+  dimensions: ${EMBEDDER__DIMENSIONS:1024}
   
   providers:
     openai:
