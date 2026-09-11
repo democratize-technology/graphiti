@@ -25,6 +25,9 @@ providers = [
     "sentence-transformers>=2.0.0",
 ]
 
+[tool.uv.sources]
+graphiti-core = { path = "..", editable = true }
+
 [tool.pyright]
 include = ["src", "tests"]
 pythonVersion = "3.10"
