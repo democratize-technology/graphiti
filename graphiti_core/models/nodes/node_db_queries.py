@@ -201,21 +201,25 @@ def get_entity_node_save_bulk_query(
         case GraphProvider.FALKORDB:
             queries = []
             for node in nodes:
-                for label in node['labels']:
-                    queries.append(
-                        (
-                            f"""
-                            UNWIND $nodes AS node
-                            MERGE (n:Entity {{uuid: node.uuid}})
-                            SET n:{label}
-                            SET n = node
-                            WITH n, node
-                            SET n.name_embedding = vecf32(node.name_embedding)
-                            RETURN n.uuid AS uuid
-                            """,
-                            {'nodes': [node]},
-                        )
+                # Exclude the labels list so it is not persisted as a node property
+                # by `SET n = node`.
+                node_data = {k: v for k, v in node.items() if k != 'labels'}
+                # Apply all labels in a single query instead of one query per label.
+                label_expr = ':'.join(node['labels']) if node['labels'] else 'Entity'
+                queries.append(
+                    (
+                        f"""
+                        UNWIND $nodes AS node
+                        MERGE (n:Entity {{uuid: node.uuid}})
+                        SET n:{label_expr}
+                        SET n = node
+                        WITH n, node
+                        SET n.name_embedding = vecf32(node.name_embedding)
+                        RETURN n.uuid AS uuid
+                        """,
+                        {'nodes': [node_data]},
                     )
+                )
             return queries
         case GraphProvider.NEPTUNE:
             queries = []
@@ -357,13 +361,14 @@ def get_saga_node_save_query(provider: GraphProvider) -> str:
                     n.summary = $summary,
                     n.first_episode_uuid = $first_episode_uuid,
                     n.last_episode_uuid = $last_episode_uuid,
-                    n.last_summarized_at = $last_summarized_at
+                    n.last_summarized_at = $last_summarized_at,
+                    n.last_summarized_episode_valid_at = $last_summarized_episode_valid_at
                 RETURN n.uuid AS uuid
             """
         case _:  # Neo4j, FalkorDB, Neptune
             return """
                 MERGE (n:Saga {uuid: $uuid})
-                SET n = {uuid: $uuid, name: $name, group_id: $group_id, created_at: $created_at, summary: $summary, first_episode_uuid: $first_episode_uuid, last_episode_uuid: $last_episode_uuid, last_summarized_at: $last_summarized_at}
+                SET n = {uuid: $uuid, name: $name, group_id: $group_id, created_at: $created_at, summary: $summary, first_episode_uuid: $first_episode_uuid, last_episode_uuid: $last_episode_uuid, last_summarized_at: $last_summarized_at, last_summarized_episode_valid_at: $last_summarized_episode_valid_at}
                 RETURN n.uuid AS uuid
             """
 
@@ -376,7 +381,8 @@ SAGA_NODE_RETURN = """
     s.summary AS summary,
     s.first_episode_uuid AS first_episode_uuid,
     s.last_episode_uuid AS last_episode_uuid,
-    s.last_summarized_at AS last_summarized_at
+    s.last_summarized_at AS last_summarized_at,
+    s.last_summarized_episode_valid_at AS last_summarized_episode_valid_at
 """
 
 SAGA_NODE_RETURN_NEPTUNE = """
@@ -387,5 +393,6 @@ SAGA_NODE_RETURN_NEPTUNE = """
     s.summary AS summary,
     s.first_episode_uuid AS first_episode_uuid,
     s.last_episode_uuid AS last_episode_uuid,
-    s.last_summarized_at AS last_summarized_at
+    s.last_summarized_at AS last_summarized_at,
+    s.last_summarized_episode_valid_at AS last_summarized_episode_valid_at
 """
