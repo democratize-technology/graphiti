@@ -5,6 +5,7 @@ from typing import Any
 
 from graphiti_core.edges import EntityEdge
 from graphiti_core.nodes import EntityNode
+from models.response_types import EdgeResult, NodeResult
 from neo4j.time import Date as Neo4jDate
 from neo4j.time import DateTime as Neo4jDateTime
 from neo4j.time import Duration as Neo4jDuration
@@ -33,13 +34,17 @@ def _json_safe(value: Any) -> Any:
         return [_json_safe(v) for v in value]
     return value
 
-from models.response_types import EdgeResult, NodeResult
-
 
 def to_node_result(node: EntityNode) -> NodeResult:
-    """Build a NodeResult TypedDict from an EntityNode, dropping embeddings."""
+    """Build a NodeResult TypedDict from an EntityNode, dropping embeddings.
+
+    Attributes are sanitized through _json_safe for the same reason as
+    format_node_result: LLM-extracted attributes can carry raw neo4j temporal
+    types that aren't JSON-serializable.
+    """
     attrs = node.attributes if node.attributes else {}
     attrs = {k: v for k, v in attrs.items() if 'embedding' not in k.lower()}
+    attrs = _json_safe(attrs)
     return NodeResult(
         uuid=node.uuid,
         name=node.name,

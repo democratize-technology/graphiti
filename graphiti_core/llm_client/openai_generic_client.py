@@ -160,13 +160,17 @@ class OpenAIGenericClient(LLMClient):
                 response_format=self._build_response_format(response_model),  # type: ignore[arg-type]
             )
             result = response.choices[0].message.content or ''
-            # An empty body (refusal, length finish_reason, or a flaky endpoint) would make
-            # json.loads raise a cryptic JSONDecodeError; surface a clear error instead.
-            if not result:
-                raise EmptyResponseError('LLM returned an empty response')
             # Many OpenAI-compatible/local models wrap JSON in a ```json fence even under a
             # structured response_format; strip it before parsing.
-            return json.loads(self._strip_code_fences(result))
+            stripped_result = self._strip_code_fences(result)
+            # An empty body (refusal, length finish_reason, an empty fenced block like
+            # "```json\n```", or a flaky endpoint) would make json.loads raise a cryptic
+            # JSONDecodeError; surface a clear error instead. Must check post-strip: a
+            # response consisting only of fence markers is truthy before stripping but
+            # empty after, so checking `result` here would miss it.
+            if not stripped_result:
+                raise EmptyResponseError('LLM returned an empty response')
+            return json.loads(stripped_result)
         except openai.RateLimitError as e:
             raise RateLimitError from e
         except Exception as e:
