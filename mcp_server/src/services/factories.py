@@ -1,12 +1,10 @@
 """Factory classes for creating LLM, Embedder, and Database clients."""
 
-import httpx
 from graphiti_core.cross_encoder.client import CrossEncoderClient
 from graphiti_core.embedder import EmbedderClient, OpenAIEmbedder
 from graphiti_core.llm_client import LLMClient, OpenAIClient
 from graphiti_core.llm_client.config import LLMConfig as GraphitiLLMConfig
 from graphiti_core.llm_client.openai_generic_client import OpenAIGenericClient
-from openai import AsyncOpenAI
 
 from config.schema import DatabaseConfig, EmbedderConfig, LLMConfig
 
@@ -165,25 +163,9 @@ class LLMClientFactory:
 
                 if use_generic_client:
                     # Use OpenAIGenericClient for Ollama and other OpenAI-compatible providers
-                    # This uses the standard Chat Completions API instead of Responses API.
-                    #
-                    # keepalive disabled: some OpenAI-compatible proxies (observed with a
-                    # local LiteLLM proxy) close idle keep-alive connections without the
-                    # client noticing, leaving sockets stuck in CLOSE_WAIT. httpx then hands
-                    # one of those dead connections back out of the pool for the next
-                    # request, which hangs forever instead of erroring. A fresh connection
-                    # per request costs one extra TCP handshake against an LLM call that
-                    # already takes seconds, and eliminates that hang entirely.
-                    http_client = httpx.AsyncClient(
-                        limits=httpx.Limits(max_keepalive_connections=0)
-                    )
+                    # This uses the standard Chat Completions API instead of Responses API
                     return OpenAIGenericClient(
                         config=llm_config,
-                        client=AsyncOpenAI(
-                            api_key=llm_config.api_key,
-                            base_url=llm_config.base_url,
-                            http_client=http_client,
-                        ),
                         max_tokens=config.max_tokens,
                         structured_output_mode=config.structured_output_mode,
                     )
